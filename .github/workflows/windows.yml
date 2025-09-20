@@ -1,21 +1,57 @@
-name: Free Windows VPS
+name: Free Windows VPS (RDP)
 on: [workflow_dispatch]
 
 jobs:
-  build:
+  rdp:
     runs-on: windows-latest
     timeout-minutes: 360
+    env:
+      NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
     steps:
-      - name: Download & Run NGROK (for RDP)
+      - name: Download ngrok
         run: |
           Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip
-          .\ngrok\ngrok.exe authtoken 30eSkoa8nBXBdtB845hPxupAP2k_2Ua6sJ2ygbyUijhRgNoFE
-          .\ngrok\ngrok.exe tcp 3389
-      
-      - name: Enable RDP and Set Password
+          Expand-Archive ngrok.zip -DestinationPath .\ngrok
+
+      - name: Create user, enable RDP, start ngrok and print address
         run: |
-          net user runneradmin P@ssw0rd!@3
+          $pwd = $env:RDP_PASSWORD
+          if (-not $pwd) { Write-Host "ERROR: RDP_PASSWORD secret not set"; exit 1 }
+
+          # 1) Create local user and add to groups
+          net user vpsuser $pwd /add
+          net localgroup Administrators vpsuser /add
+          net localgroup "Remote Desktop Users" vpsuser /add
+
+          # 2) Enable RDP and firewall
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          # Disable NLA (helps when clients fail due to NLA issues). If you want NLA ON set value to 1.
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1
+
+          # 3) Configure ngrok and start in background
+          .\ngrok\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
+          Start-Process -FilePath .\ngrok\ngrok.exe -ArgumentList 'tcp 3389' -WindowStyle Hidden
+
+          # 4) Wait for ngrok to expose tunnel and print the public tcp address
+          $end = (Get-Date).AddSeconds(60)
+          $pub = $null
+          while ((Get-Date) -lt $end) {
+            try {
+              $api = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels -ErrorAction Stop
+              if ($api.tunnels.Count -gt 0) { $pub = $api.tunnels[0].public_url; break }
+            } catch { Start-Sleep -Seconds 1 }
+          }
+
+          if (-not $pub) {
+            Write-Host "ERROR: ngrok didn't start or API not reachable. Check runner logs."
+            exit 1
+          }
+
+          $addr = $pub -replace 'tcp://',''
+          Write-Host "==================== RDP READY ===================="
+          Write-Host "Use this to connect (Host:Port): $addr"
+          Write-Host "Username: .\\vpsuser    (or just 'vpsuser')"
+          Write-Host "Password: (the value in repo secret RDP_PASSWORD)"
+          Write-Host "==================================================="
