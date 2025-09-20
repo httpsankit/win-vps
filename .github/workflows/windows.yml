@@ -13,9 +13,9 @@ jobs:
           .\ngrok\ngrok.exe authtoken 30eSkoa8nBXBdtB845hPxupAP2k_2Ua6sJ2ygbyUijhRgNoFE
           .\ngrok\ngrok.exe tcp 3389
       
-      - name: Enable RDP
+      - name: Enable RDP and Set Password
         run: |
+          net user runneradmin P@ssw0rd!@3
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1
-          net user runneradmin P@ssw0rd!23
